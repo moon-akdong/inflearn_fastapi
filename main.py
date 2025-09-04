@@ -7,10 +7,20 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 from passlib.context import CryptContext # 패스워드 해싱
+from starlette.middleware.sessions import SessionMiddleware
  
 app = FastAPI()
+app.add_middleware(SessionMiddleware, secret_key="your_secret_key")
 templates = Jinja2Templates(directory="templates")
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# 패스워드 해싱 함수
+def get_password_hash(password: str):
+    return pwd_context.hash(password)
+# 패스워드 검증 함수
+def verify_password(plain_password: str, hashed_password: str):
+    return pwd_context.verify(plain_password, hashed_password)
+    #hashed_password = 데이터 베이스에 있는 해싱된 비밀번호 
 
 DATABASE_URL = "mysql+pymysql://root:6884@localhost:3306/my_memo_app"
 engine = create_engine(DATABASE_URL)
@@ -33,6 +43,32 @@ class MemoUpdate(BaseModel): # 메모 수정 모델
     title: Optional[str] = None
     content: Optional[str] = None
 
+# 데이터 베이스 테이블 유저 생성
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(100), unique=True, index=True) #index = 검색 속도 증가 : 검색을 많이 할꺼 같을 때
+    email = Column(String(100), unique=True, index=True)
+    hashed_password = Column(String(100))
+    created_at = Column(DateTime, default=datetime.now)
+# DB 들어가기 전 유저 데이터 검증 모델둘 
+class UserCreate(BaseModel):
+    username: str
+    email: str
+    password: str
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+class UserUpdate(BaseModel):
+    username: Optional[str] = None
+    email: Optional[str] = None
+    password: Optional[str] = None
+
+# 테이블 생성 전 columns 정의한 클래스가 먼저 나와야 한다.
+# Base를 상속받는 클래스가 columns 정의한 클래스이다.
+# BaseModel을 상속받는 클래스가 검증 모델이다. -> 이건 뒤에 와도 된다.
 def get_db():
     db = Session(bind=engine)
     try:
@@ -41,6 +77,14 @@ def get_db():
         db.close()
 
 Base.metadata.create_all(bind=engine) # 테이블 생성
+
+@app.get("/")
+async def read_root(request: Request):
+    return templates.TemplateResponse("home.html", {"request": request})
+
+@app.get("/about")
+async def about():
+    return {"message": "This is the about page"}
 
 # 메모 생성 - 클라이언트에서 -> 서버로
 @app.post("/memos/")
@@ -81,13 +125,29 @@ async def delete_memo(memo_id: int, db: Session = Depends(get_db)):
     db.commit()
     return ({"message": "Memo deleted successfully"})
 
-@app.get("/")
-async def read_root(request: Request):
-    return templates.TemplateResponse("home.html", {"request": request})
 
-@app.get("/about")
-async def about():
-    return {"message": "This is the about page"}
+@app.post("/signup/")
+async def signup(user: UserCreate, db: Session = Depends(get_db)):
+    hashed_password = get_password_hash(user.password)
+    new_user = User(username=user.username, email=user.email, hashed_password=hashed_password)
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return {"message": "User created successfully", "user_id": new_user.id}
+
+@app.post("/login/")
+async def login(user: UserLogin, request: Request, db: Session = Depends(get_db)):
+    db_user = db.query(User).filter(User.username == user.username).first()
+    if db_user and verify_password(user.password, db_user.hashed_password):
+        request.session["user_id"] = db_user.id
+        return {"message": "Login successful", "user_id": db_user.id}
+    else:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+@app.post("/logout/")
+async def logout(request: Request):
+    request.session.pop("user_id", None)
+    return {"message": "Logout successful"}
 
 if __name__ == "__main__":
     import uvicorn
