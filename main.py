@@ -6,9 +6,11 @@ from sqlalchemy.ext.declarative import declarative_base
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
+from passlib.context import CryptContext # 패스워드 해싱
  
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 DATABASE_URL = "mysql+pymysql://root:6884@localhost:3306/my_memo_app"
 engine = create_engine(DATABASE_URL)
