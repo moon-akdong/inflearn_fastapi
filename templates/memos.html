@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ko">
+    <head>
+        <meta charset="UTF-8">
+        <title>메모 목록</title>
+        <style>
+            body {font-family: Arial, sans-serif;}
+            .memo {margin-bottom: 20px; padding: 10px; border: 1px solid #ddd;}
+            .memo-title {font-weight: bold;}
+        </style>
+    </head>
+    <body>
+        <h1>나의 메모</h1>
+        <p><a href="/memos/new">새 메모 작성</a></p>
+        {% for memo in memos %}
+        <div class="memo">
+            <h2 class="memo-title">{{ memo.title }}</h2>
+            <p class="memo-content">{{ memo.content }}</p>
+            <p class="memo-date">{{ memo.created_at.strftime("%Y-%m-%d %H:%M:%S") }}</p>
+            <p><a href="/memos/update/{{ memo.id }}">수정</a></p>
+            <p><a href="/memos/delete/{{ memo.id }}">삭제</a></p>
+        </div>
+        {% endfor %}
+        
+    </body>
+</html>

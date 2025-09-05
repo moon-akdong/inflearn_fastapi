@@ -31,6 +31,7 @@ session = Session()
 class Memo(Base):
     __tablename__ = "memos"
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
     title = Column(String(100), index=True)
     content = Column(String(1000), index=True)
     created_at = Column(DateTime, default=datetime.now)
@@ -88,12 +89,20 @@ async def about():
 
 # 메모 생성 - 클라이언트에서 -> 서버로
 @app.post("/memos/")
-async def create_memo(memo: MemoCreate, db: Session = Depends(get_db)):
-    new_memo = Memo(title=memo.title, content=memo.content)
+async def create_memo(request: Request, memo: MemoCreate, db: Session = Depends(get_db)):
+    # request : session 정보를 가져오기 위해 사용
+    username = request.session.get("username") # 로그인 확인 후에는 username을 세션에서 저장했기 때문에
+    if username is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    user = db.query(User).filter(User.username == username).first()
+    if user is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    new_memo = Memo(title=memo.title, content=memo.content, user_id=user.id)
+    # new_memo = Memo(title=memo.title, content=memo.content)
     db.add(new_memo)
     db.commit()
     db.refresh(new_memo)
-    return ({"id": new_memo.id, "title": new_memo.title, "content": new_memo.content})
+    return new_memo
 
 # 메모 조회 - 서버에서 -> 클라이언트
 @app.get("/memos")
