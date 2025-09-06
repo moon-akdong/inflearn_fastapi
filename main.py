@@ -1,6 +1,6 @@
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Table, MetaData
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Table, MetaData, ForeignKey, Index
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from pydantic import BaseModel
@@ -33,7 +33,7 @@ class Memo(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     title = Column(String(100), index=True)
-    content = Column(String(1000), index=True)
+    content = Column(String(1000))
     created_at = Column(DateTime, default=datetime.now)
 
 class MemoCreate(BaseModel): # 메모 생성 검증 모델
@@ -96,7 +96,7 @@ async def create_memo(request: Request, memo: MemoCreate, db: Session = Depends(
         raise HTTPException(status_code=401, detail="Unauthorized")
     user = db.query(User).filter(User.username == username).first()
     if user is None:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        raise HTTPException(status_code=404, detail="Unauthorized")
     new_memo = Memo(title=memo.title, content=memo.content, user_id=user.id)
     # new_memo = Memo(title=memo.title, content=memo.content)
     db.add(new_memo)
@@ -106,14 +106,28 @@ async def create_memo(request: Request, memo: MemoCreate, db: Session = Depends(
 
 # 메모 조회 - 서버에서 -> 클라이언트
 @app.get("/memos")
-async def list_memos(db: Session = Depends(get_db)):
-    memos = db.query(Memo).all()
-    return [{"id": memo.id, "title": memo.title, "content": memo.content} for memo in memos]
+async def list_memos(request: Request, db: Session = Depends(get_db)):
+    username = request.session.get("username")
+    if username is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    user = db.query(User).filter(User.username == username).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="Unauthorized")
+    memos = db.query(Memo).filter(Memo.user_id == user.id).all()
+    return templates.TemplateResponse("memos.html", {"request": request, "memos": memos})
 
 # 메모 수정 
 @app.put("/memos/{memo_id}")
-async def update_memo(memo_id: int, memo: MemoUpdate, db: Session = Depends(get_db)):
-    db_memo = db.query(Memo).filter(Memo.id == memo_id).first()
+async def update_memo(memo_id: int, memo: MemoUpdate, request: Request, db: Session = Depends(get_db)):
+    # 로그인 확인
+    username = request.session.get("username")
+    if username is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    user = db.query(User).filter(User.username == username).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    db_memo = db.query(Memo).filter(Memo.id == memo_id, Memo.user_id == user.id).first()
     if db_memo is None:
         raise HTTPException(status_code=404, detail="Memo not found")
     if memo.title is not None:
@@ -122,12 +136,20 @@ async def update_memo(memo_id: int, memo: MemoUpdate, db: Session = Depends(get_
         db_memo.content = memo.content
     db.commit()
     db.refresh(db_memo)
-    return ({"id": db_memo.id, "title": db_memo.title, "content": db_memo.content})
+    return db_memo
 
 # 메모 삭제
 @app.delete("/memos/{memo_id}")
-async def delete_memo(memo_id: int, db: Session = Depends(get_db)):
-    db_memo = db.query(Memo).filter(Memo.id == memo_id).first()
+async def delete_memo(memo_id: int, request: Request, db: Session = Depends(get_db)):
+    # 로그인 확인
+    username = request.session.get("username")
+    if username is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    user = db.query(User).filter(User.username == username).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    db_memo = db.query(Memo).filter(Memo.id == memo_id, Memo.user_id == user.id).first()
     if db_memo is None:
         raise HTTPException(status_code=404, detail="Memo not found")
     db.delete(db_memo)
@@ -148,14 +170,14 @@ async def signup(user: UserCreate, db: Session = Depends(get_db)):
 async def login(user: UserLogin, request: Request, db: Session = Depends(get_db)):
     db_user = db.query(User).filter(User.username == user.username).first()
     if db_user and verify_password(user.password, db_user.hashed_password):
-        request.session["user_id"] = db_user.id
-        return {"message": "Login successful", "user_id": db_user.id}
+        request.session["username"] = db_user.username  # username도 세션에 저장
+        return {"message": "Login successful", "user_id": db_user.id, "username": db_user.username}
     else:
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
 @app.post("/logout/")
 async def logout(request: Request):
-    request.session.pop("user_id", None)
+    request.session.pop("username", None)  # username도 세션에서 제거
     return {"message": "Logout successful"}
 
 if __name__ == "__main__":
