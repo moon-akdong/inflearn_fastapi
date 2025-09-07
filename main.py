@@ -114,7 +114,7 @@ async def list_memos(request: Request, db: Session = Depends(get_db)):
     if user is None:
         raise HTTPException(status_code=404, detail="Unauthorized")
     memos = db.query(Memo).filter(Memo.user_id == user.id).all()
-    return templates.TemplateResponse("memos.html", {"request": request, "memos": memos})
+    return templates.TemplateResponse("memos.html", {"request": request, "memos": memos,"username": username})
 
 # 메모 수정 
 @app.put("/memos/{memo_id}")
@@ -159,10 +159,18 @@ async def delete_memo(memo_id: int, request: Request, db: Session = Depends(get_
 
 @app.post("/signup/")
 async def signup(user: UserCreate, db: Session = Depends(get_db)):
+    existing_user = db.query(User).filter(User.username == user.username).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username already exists")
+
     hashed_password = get_password_hash(user.password)
     new_user = User(username=user.username, email=user.email, hashed_password=hashed_password)
+
     db.add(new_user)
-    db.commit()
+    try:
+        db.commit()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     db.refresh(new_user)
     return {"message": "User created successfully", "user_id": new_user.id}
 
